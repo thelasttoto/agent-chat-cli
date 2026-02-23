@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import argparse
 import asyncio
 import itertools
 import os
@@ -16,12 +17,9 @@ from rich.panel import Panel
 from rich.theme import Theme
 
 # Theme for general-purpose agent
-custom_theme = Theme({
-    "info": "cyan",
-    "warning": "yellow",
-    "error": "red",
-    "agent": "green"
-})
+custom_theme = Theme(
+    {"info": "cyan", "warning": "yellow", "error": "red", "agent": "green"}
+)
 
 console = Console(theme=custom_theme)
 
@@ -29,15 +27,18 @@ console = Console(theme=custom_theme)
 _stream_start_event: asyncio.Event | None = None
 _spinner_cleared_event: asyncio.Event | None = None
 
+
 async def wait_spinner_cleared():
     global _spinner_cleared_event
     if _spinner_cleared_event is not None:
         await _spinner_cleared_event.wait()
 
+
 def notify_streaming_started():
     global _stream_start_event
     if _stream_start_event is not None:
         _stream_start_event.set()
+
 
 async def spinner(
     msg: str = "⏳ Waiting for agent...",
@@ -47,7 +48,7 @@ async def spinner(
     """
     Show an animated spinner in the terminal using ASCII, not Rich. No flush.
     """
-    for frame in itertools.cycle(['|', '/', '-', '\\']):
+    for frame in itertools.cycle(["|", "/", "-", "\\"]):
         if stop_event is not None and stop_event.is_set():
             # Replace spinner char with an arrow on the same line
             try:
@@ -57,8 +58,9 @@ async def spinner(
             if cleared_event is not None:
                 cleared_event.set()
             break
-        print(f"\r{msg} {frame}", end='')
+        print(f"\r{msg} {frame}", end="")
         await asyncio.sleep(0.1)
+
 
 def render_answer(answer: str, agent_name: str = "Agent"):
     answer = answer.strip()
@@ -67,47 +69,59 @@ def render_answer(answer: str, agent_name: str = "Agent"):
         return
 
     console.print("\n")
-    console.print(Panel(
-        Markdown(answer),
-        title=f"[agent]{agent_name} Response[/agent]",
-        border_style="agent",
-        padding=(1, 2)
-    ))
+    console.print(
+        Panel(
+            Markdown(answer),
+            title=f"[agent]{agent_name} Response[/agent]",
+            border_style="agent",
+            padding=(1, 2),
+        )
+    )
     console.print("\n")
+
 
 def clear_screen():
     if platform.system() == "Windows":
-        os.system('cls')
+        os.system("cls")
     else:
-        os.system('clear')
+        os.system("clear")
 
-def print_welcome_message(agent_name: str, skills_description: str = "", skills_examples: str = ""):
-  welcome_text = (
-    f"[agent]🚀 Welcome to {agent_name} CLI[/agent]\n\n"
-    "This agent helps you interact with tools dynamically.\n"
-    "Type your question and hit enter.\n"
-    "Type 'exit' or 'quit' to leave. Type 'clear' to clear the screen. Type 'history' to view chat history."
-  )
-  if skills_description:
-    welcome_text += f"\n\n[info]Skills Description:[/info]\n{skills_description}"
-  if skills_examples:
-    # skills_examples is already a list
-    bullets = "\n".join(f"- {ex}" for ex in skills_examples)
-    welcome_text += f"\n\n[info]Example Skills:[/info]\n{bullets}"
 
-  console.print(Panel(
-    welcome_text,
-    title=f"[agent]{agent_name}[/agent]",
-    border_style="agent",
-    padding=(1, 2)
-  ))
-  console.print("\n")
+def print_welcome_message(
+    agent_name: str, skills_description: str = "", skills_examples: str = ""
+):
+    welcome_text = (
+        f"[agent]🚀 Welcome to {agent_name} CLI[/agent]\n\n"
+        "This agent helps you interact with tools dynamically.\n"
+        "Type your question and hit enter.\n"
+        "Type 'exit' or 'quit' to leave. Type 'clear' to clear the screen. Type 'history' to view chat history."
+    )
+    if skills_description:
+        welcome_text += f"\n\n[info]Skills Description:[/info]\n{skills_description}"
+    if skills_examples:
+        # skills_examples is already a list
+        bullets = "\n".join(f"- {ex}" for ex in skills_examples)
+        welcome_text += f"\n\n[info]Example Skills:[/info]\n{bullets}"
 
-async def run_chat_loop(handle_user_input: Callable[[str], Awaitable[None]],
-                        agent_name: str = "Agent",
-                        skills_description: str = "",
-                        skills_examples: str = "",
-                        history_key: str = "agent"):
+    console.print(
+        Panel(
+            welcome_text,
+            title=f"[agent]{agent_name}[/agent]",
+            border_style="agent",
+            padding=(1, 2),
+        )
+    )
+    console.print("\n")
+
+
+async def run_chat_loop(
+    handle_user_input: Callable[[str], Awaitable[None]],
+    agent_name: str = "Agent",
+    skills_description: str = "",
+    skills_examples: str = "",
+    history_key: str = "agent",
+    multi_input_enabled: bool = False,
+):
     print_welcome_message(agent_name, skills_description, skills_examples)
     history_file = os.path.expanduser(f"~/.{history_key}_chat_history")
 
@@ -125,7 +139,9 @@ async def run_chat_loop(handle_user_input: Callable[[str], Awaitable[None]],
                 readline.write_history_file(history_file)
             except Exception:
                 pass
-            console.print(f"\n[agent]🛑 {agent_name} suspended. Use 'fg' to resume.[/agent]")
+            console.print(
+                f"\n[agent]🛑 {agent_name} suspended. Use 'fg' to resume.[/agent]"
+            )
             # Restore default handler and re-raise signal to actually suspend
             signal.signal(signal.SIGTSTP, signal.SIG_DFL)
             os.kill(os.getpid(), signal.SIGTSTP)
@@ -151,17 +167,28 @@ async def run_chat_loop(handle_user_input: Callable[[str], Awaitable[None]],
     try:
         while True:
             try:
-                user_input = input("💬 You: ").strip()
+                if multi_input_enabled:
+                    console.print("💬 You: (use ctrl+D to end input)")
+                    user_input = sys.stdin.read().strip()
+                else:
+                    user_input = input("💬 You: ").strip()
                 if user_input.lower() in ["exit", "quit"]:
-                    console.print(f"\n[agent]👋 Thank you for using {agent_name}. Goodbye![/agent]")
+                    console.print(
+                        f"\n[agent]👋 Thank you for using {agent_name}. Goodbye![/agent]"
+                    )
                     break
                 elif user_input.lower() == "clear":
                     clear_screen()
                     print_welcome_message(agent_name)
                     continue
                 elif user_input.lower() == "history":
-                    console.print("\n[agent]📜 Chat History (last 100 entries):[/agent]")
-                    history = [readline.get_history_item(i) for i in range(1, readline.get_current_history_length() + 1)]
+                    console.print(
+                        "\n[agent]📜 Chat History (last 100 entries):[/agent]"
+                    )
+                    history = [
+                        readline.get_history_item(i)
+                        for i in range(1, readline.get_current_history_length() + 1)
+                    ]
                     for idx, entry in enumerate(history[-100:], 1):
                         console.print(f"{idx}: {entry}")
                     console.print()
@@ -173,7 +200,11 @@ async def run_chat_loop(handle_user_input: Callable[[str], Awaitable[None]],
                     global _stream_start_event, _spinner_cleared_event
                     _stream_start_event = stop_event
                     _spinner_cleared_event = spinner_cleared_event
-                    spinner_task = asyncio.create_task(spinner(stop_event=stop_event, cleared_event=spinner_cleared_event))
+                    spinner_task = asyncio.create_task(
+                        spinner(
+                            stop_event=stop_event, cleared_event=spinner_cleared_event
+                        )
+                    )
                     try:
                         await handle_user_input(user_input)
                     except Exception as e:
@@ -198,13 +229,20 @@ async def run_chat_loop(handle_user_input: Callable[[str], Awaitable[None]],
         except Exception as e:
             console.print(f"[warning]⚠️  Could not save history file: {e}[/warning]")
 
-async def main():
-    if len(sys.argv) < 2:
-        console.print("[error]Please provide the agent name or base URL as an argument.[/error]")
-        console.print("Example: python chat_interface.py MyAgent")
-        sys.exit(1)
 
-    agent_name_or_url = sys.argv[1]
+async def main():
+    print("🚀 Starting Agent Chat CLI...")
+    parser = argparse.ArgumentParser(description="Agent Chat CLI")
+    parser.add_argument("agent_name_or_url", help="Agent name or base URL")
+    parser.add_argument(
+        "--multi-input",
+        action="store_true",
+        help="Enable multi-line input mode (read from stdin until EOF)",
+    )
+    args = parser.parse_args()
+
+    agent_name_or_url = args.agent_name_or_url
+    multi_input_enabled = args.multi_input
 
     # Example placeholder — inject your agent or A2A client logic here
     class MockChat:
@@ -213,7 +251,12 @@ async def main():
 
     chat = MockChat()
 
-    await run_chat_loop(lambda message: chat.send_message(message), agent_name=agent_name_or_url)
+    await run_chat_loop(
+        lambda message: chat.send_message(message),
+        agent_name=agent_name_or_url,
+        multi_input_enabled=multi_input_enabled,
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(main())
