@@ -121,24 +121,33 @@ async def run_chat_loop(
     skills_examples: str = "",
     history_key: str = "agent",
     multi_input_enabled: bool = False,
+    no_history: bool = False,
 ):
     print_welcome_message(agent_name, skills_description, skills_examples)
+
+    if no_history:
+        console.print(
+            "[warning]⚠️  History is disabled (--no-history). Inputs will not be saved or recalled.[/warning]\n"
+        )
+
     history_file = os.path.expanduser(f"~/.{history_key}_chat_history")
 
-    try:
-        if os.path.exists(history_file):
-            readline.read_history_file(history_file)
-    except Exception as e:
-        console.print(f"[warning]⚠️  Could not load history file: {e}[/warning]")
+    if not no_history:
+        try:
+            if os.path.exists(history_file):
+                readline.read_history_file(history_file)
+        except Exception as e:
+            console.print(f"[warning]⚠️  Could not load history file: {e}[/warning]")
 
     # Signal handler for graceful exit
     def signal_handler(signum, frame):
         if signum == signal.SIGTSTP:
             # Save history before suspending
-            try:
-                readline.write_history_file(history_file)
-            except Exception:
-                pass
+            if not no_history:
+                try:
+                    readline.write_history_file(history_file)
+                except Exception:
+                    pass
             console.print(
                 f"\n[agent]🛑 {agent_name} suspended. Use 'fg' to resume.[/agent]"
             )
@@ -148,10 +157,11 @@ async def run_chat_loop(
         elif signum == signal.SIGQUIT:
             console.print(f"\n[agent]👋 {agent_name} terminated. Goodbye![/agent]")
             # Save history before exiting
-            try:
-                readline.write_history_file(history_file)
-            except Exception:
-                pass
+            if not no_history:
+                try:
+                    readline.write_history_file(history_file)
+                except Exception:
+                    pass
             sys.exit(0)
         elif signum == signal.SIGCONT:
             # Re-register SIGTSTP handler after resuming from suspension
@@ -167,11 +177,12 @@ async def run_chat_loop(
     try:
         while True:
             try:
+                prompt_prefix = "💬 [no-history] You: " if no_history else "💬 You: "
                 if multi_input_enabled:
-                    console.print("💬 You: (use ctrl+D to end input)")
+                    console.print(f"{prompt_prefix}(use ctrl+D to end input)")
                     user_input = sys.stdin.read().strip()
                 else:
-                    user_input = input("💬 You: ").strip()
+                    user_input = input(prompt_prefix).strip()
                 if user_input.lower() in ["exit", "quit"]:
                     console.print(
                         f"\n[agent]👋 Thank you for using {agent_name}. Goodbye![/agent]"
@@ -182,19 +193,25 @@ async def run_chat_loop(
                     print_welcome_message(agent_name)
                     continue
                 elif user_input.lower() == "history":
-                    console.print(
-                        "\n[agent]📜 Chat History (last 100 entries):[/agent]"
-                    )
-                    history = [
-                        readline.get_history_item(i)
-                        for i in range(1, readline.get_current_history_length() + 1)
-                    ]
-                    for idx, entry in enumerate(history[-100:], 1):
-                        console.print(f"{idx}: {entry}")
-                    console.print()
+                    if no_history:
+                        console.print(
+                            "[warning]⚠️  History is disabled (--no-history).[/warning]"
+                        )
+                    else:
+                        console.print(
+                            "\n[agent]📜 Chat History (last 100 entries):[/agent]"
+                        )
+                        history = [
+                            readline.get_history_item(i)
+                            for i in range(1, readline.get_current_history_length() + 1)
+                        ]
+                        for idx, entry in enumerate(history[-100:], 1):
+                            console.print(f"{idx}: {entry}")
+                        console.print()
                     continue
                 if user_input:
-                    readline.add_history(user_input)
+                    if not no_history:
+                        readline.add_history(user_input)
                     stop_event = asyncio.Event()
                     spinner_cleared_event = asyncio.Event()
                     global _stream_start_event, _spinner_cleared_event
@@ -224,10 +241,11 @@ async def run_chat_loop(
                 console.print("\n[agent]👋 Chat interrupted. Goodbye![/agent]")
                 break
     finally:
-        try:
-            readline.write_history_file(history_file)
-        except Exception as e:
-            console.print(f"[warning]⚠️  Could not save history file: {e}[/warning]")
+        if not no_history:
+            try:
+                readline.write_history_file(history_file)
+            except Exception as e:
+                console.print(f"[warning]⚠️  Could not save history file: {e}[/warning]")
 
 
 async def main():

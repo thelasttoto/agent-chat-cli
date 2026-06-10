@@ -1417,7 +1417,7 @@ async def fetch_agent_card(host, port, token: str, tls: bool) -> AgentCard:
         return final_agent_card_to_use
 
 
-def main(host, port, token, tls, multi_input_enabled=False):
+def main(host, port, token, tls, multi_input_enabled=False, no_history=False):
     # Get CLI version
     cli_version = "unknown"
     try:
@@ -1471,5 +1471,6 @@ def main(host, port, token, tls, multi_input_enabled=False):
             skills_description=skills_description,
             skills_examples=skills_examples,
             multi_input_enabled=multi_input_enabled,
+            no_history=no_history,
         )
     )

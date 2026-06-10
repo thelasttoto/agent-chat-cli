@@ -105,7 +105,12 @@ console = Console(theme=custom_theme)
     is_flag=True,
     help="Enable multi-line input mode (read from stdin until EOF)",
 )
-def a2a(host, port, token, debug, multi_input):
+@click.option(
+    "--no-history",
+    is_flag=True,
+    help="Disable readline history (do not load or save chat history)",
+)
+def a2a(host, port, token, debug, multi_input, no_history):
     """Run A2A protocol client."""
 
     if debug:
@@ -189,7 +194,12 @@ def a2a(host, port, token, debug, multi_input):
 
     client_module = load_client_module("a2a")
     client_module.main(
-        host=host, port=port, token=token, tls=tls, multi_input_enabled=multi_input
+        host=host,
+        port=port,
+        token=token,
+        tls=tls,
+        multi_input_enabled=multi_input,
+        no_history=no_history,
     )
 
 
