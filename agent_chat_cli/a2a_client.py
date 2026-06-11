@@ -99,9 +99,34 @@ DEBUG = os.environ.get("A2A_DEBUG_CLIENT", "false").lower() in ["1", "true", "ye
 if DEBUG:
     logger.debug(f"====== DEBUG MODE - Agent URL: {AGENT_URL} ======")
 
+# L9Router mode configuration
+L9ROUTER_MODE = os.environ.get("L9ROUTER_MODE", "false").lower() in ["1", "true", "yes"]
+L9ROUTER_URL = os.environ.get("L9ROUTER_URL", "http://localhost:9000")
+L9ROUTER_AGENT_NAME = os.environ.get("L9ROUTER_AGENT_NAME", "")
+L9ROUTER_USER_ID = os.environ.get("L9ROUTER_USER_ID", "")
+DEPLOYMENT_ID = os.environ.get("DEPLOYMENT_ID", "")
+
+if L9ROUTER_MODE:
+    # In L9Router mode, connect to L9Router instead of agent directly
+    AGENT_URL = L9ROUTER_URL
+    logger.info(f"L9Router mode enabled: connecting to {L9ROUTER_URL}")
+    logger.info(f"  Target agent: {L9ROUTER_AGENT_NAME}")
+    logger.info(f"  User ID: {L9ROUTER_USER_ID}")
+    logger.info(f"  Deployment ID: {DEPLOYMENT_ID}")
+
 console = Console()
 
 SESSION_CONTEXT_ID = uuid4().hex
+
+# Turn counter for L9Router mode
+_turn_counter = 0
+
+
+def get_next_turn_id() -> int:
+    """Get next turn ID for L9Router message tracking."""
+    global _turn_counter
+    _turn_counter += 1
+    return _turn_counter
 
 
 def debug_log(message: str) -> None:
@@ -544,36 +569,64 @@ def create_send_message_payload(text: str) -> dict[str, Any]:
     """
     Create a properly formatted message payload for A2A communication.
 
-    This function constructs the message structure required by the A2A protocol,
-    including user role, text content, unique message ID, and session context.
+    In L9Router mode, creates USER_MSG format for L9Router proxy.
+    In standard mode, creates standard A2A message format.
 
     Args:
       text: The user's input text to send to the agent
 
     Returns:
-      A dictionary containing the formatted message payload with:
+      A dictionary containing the formatted message payload
+
+    L9Router mode payload structure (USER_MSG):
+      - type: "USER_MSG"
+      - agent_name: Target agent name
+      - user_id: User identifier
+      - direction: "user_to_agent"
+      - message: User text
+      - deployment_id: Deployment UUID
+      - conversation_id: Session context ID
+      - turn_id: Turn counter
+
+    Standard A2A mode payload structure:
       - message.role: Set to "user"
       - message.parts: List containing the text content
       - message.messageId: Unique identifier for this message
       - message.contextId: Session context ID for conversation continuity
     """
-    return {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": text}],
-            "messageId": uuid4().hex,
-            "contextId": SESSION_CONTEXT_ID,  # Include the session context ID in each message
+    if L9ROUTER_MODE:
+        # L9Router mode: create USER_MSG payload
+        from agent_chat_cli.l9router_adapter import create_user_msg_payload
+
+        payload = create_user_msg_payload(
+            text=text,
+            agent_name=L9ROUTER_AGENT_NAME,
+            user_id=L9ROUTER_USER_ID,
+            deployment_id=DEPLOYMENT_ID,
+            conversation_id=SESSION_CONTEXT_ID,
+            turn_id=get_next_turn_id(),
+        )
+
+        logger.debug(f"Created L9Router USER_MSG payload: turn_id={payload['turn_id']}")
+        return payload
+    else:
+        # Standard A2A mode: original format
+        return {
+            "message": {
+                "role": "user",
+                "parts": [{"type": "text", "text": text}],
+                "messageId": uuid4().hex,
+                "contextId": SESSION_CONTEXT_ID,
+            }
         }
-    }
 
 
 def extract_response_text(response) -> str:
     """
     Extract text content from A2A response objects (non-streaming mode).
 
-    This function handles various response formats and attempts to extract
-    meaningful text content from different parts of the response structure.
-    It supports both artifacts and status message formats.
+    In L9Router mode, extracts USER_MSG (agent_to_user) from response.
+    In standard mode, extracts text from artifacts or status message.
 
     Args:
       response: The A2A response object (can be Pydantic model, dict, etc.)
@@ -586,6 +639,30 @@ def extract_response_text(response) -> str:
       For streaming responses, use _flatten_text_from_message_dict instead.
     """
     try:
+        # L9Router mode: extract USER_MSG response
+        if L9ROUTER_MODE:
+            from agent_chat_cli.l9router_adapter import extract_agent_response, format_detective_analysis
+
+            try:
+                message_text, detective_analysis = extract_agent_response(response)
+
+                # Display detective analysis if present
+                if detective_analysis:
+                    analysis_text = format_detective_analysis(detective_analysis)
+                    console.print(f"[dim]{analysis_text}[/dim]")
+
+                    # Check for blocked messages
+                    if detective_analysis.get("verdict") == "block":
+                        console.print("[error]🚫 Message was blocked by security analysis[/error]")
+                        return "[Message blocked by security policy]"
+
+                return message_text
+            except Exception as e:
+                logger.error(f"Failed to extract L9Router response: {e}")
+                # Fallback to standard extraction
+                pass
+
+        # Standard A2A mode: original extraction logic
         # Convert response to dictionary format
         if hasattr(response, "model_dump"):
             response_data = response.model_dump()
@@ -625,10 +702,14 @@ def _flatten_text_from_message_dict(message: Any) -> str:
     """
     Extract and concatenate text content from message objects (streaming mode).
 
+    In L9Router mode, attempts to parse USER_MSG JSON from parts.
+    In standard mode, extracts text from various message formats.
+
     This function handles various message formats commonly found in streaming responses:
     - Direct text fields: {text: "content"}
     - Parts-based messages: {parts: [{kind: 'text', text: 'content'}]}
     - Nested root structures: {parts: [{root: {kind: 'text', text: 'content'}}]}
+    - L9Router USER_MSG: JSON payload in parts with type=USER_MSG
 
     Args:
       message: Message object or dictionary containing text content
@@ -652,7 +733,19 @@ def _flatten_text_from_message_dict(message: Any) -> str:
 
         # Direct text on message
         if isinstance(message.get("text"), str):
-            return message["text"]
+            text_content = message["text"]
+
+            # L9Router mode: try to parse as USER_MSG JSON
+            if L9ROUTER_MODE:
+                try:
+                    import json
+                    user_msg = json.loads(text_content)
+                    if user_msg.get("type") == "USER_MSG" and user_msg.get("direction") == "agent_to_user":
+                        return user_msg.get("message", "")
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+
+            return text_content
 
         # Parts-based text extraction
         parts = message.get("parts", [])
@@ -669,19 +762,47 @@ def _flatten_text_from_message_dict(message: Any) -> str:
             if isinstance(root, dict):
                 kind = root.get("kind") or root.get("type")
                 if kind == "text":
+                    text_val = ""
                     if isinstance(root.get("text"), str):
-                        texts.append(root["text"])
+                        text_val = root["text"]
                     elif isinstance(root.get("content"), str):
-                        texts.append(root["content"])
+                        text_val = root["content"]
+
+                    # L9Router mode: try to parse as USER_MSG JSON
+                    if L9ROUTER_MODE and text_val:
+                        try:
+                            import json
+                            user_msg = json.loads(text_val)
+                            if user_msg.get("type") == "USER_MSG" and user_msg.get("direction") == "agent_to_user":
+                                texts.append(user_msg.get("message", ""))
+                                continue
+                        except (json.JSONDecodeError, AttributeError):
+                            pass
+
+                    texts.append(text_val)
                 continue
 
             # Flat part payload
             kind = p.get("kind") or p.get("type")
             if kind == "text":
+                text_val = ""
                 if isinstance(p.get("text"), str):
-                    texts.append(p["text"])
+                    text_val = p["text"]
                 elif isinstance(p.get("content"), str):
-                    texts.append(p["content"])
+                    text_val = p["content"]
+
+                # L9Router mode: try to parse as USER_MSG JSON
+                if L9ROUTER_MODE and text_val:
+                    try:
+                        import json
+                        user_msg = json.loads(text_val)
+                        if user_msg.get("type") == "USER_MSG" and user_msg.get("direction") == "agent_to_user":
+                            texts.append(user_msg.get("message", ""))
+                            continue
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+
+                texts.append(text_val)
         return "".join(texts)
     except Exception:
         return ""
@@ -733,19 +854,35 @@ async def handle_user_input(user_input: str, token: str = None) -> None:
             debug_log("Successfully connected to agent")
 
             payload = create_send_message_payload(user_input)
-            debug_log(
-                f"Created payload with message ID: {payload['message']['messageId']}"
-            )
 
-            # Try streaming first (preferred mode for real-time user experience)
-            try:
-                # Create streaming request with unique ID and message payload
+            if L9ROUTER_MODE:
+                # In L9Router mode, wrap USER_MSG payload as A2A message
+                from agent_chat_cli.l9router_adapter import wrap_as_a2a_message
+
+                debug_log(f"Created L9Router USER_MSG payload: {payload}")
+                a2a_message = wrap_as_a2a_message(payload)
+
+                # Use the A2A message directly for streaming
+                streaming_request = SendStreamingMessageRequest(
+                    id=uuid4().hex,
+                    params=MessageSendParams(message=a2a_message),
+                )
+                debug_log(f"Wrapped as A2A message for L9Router at {client.url}...")
+            else:
+                # Standard A2A mode
+                debug_log(
+                    f"Created payload with message ID: {payload['message']['messageId']}"
+                )
+
+                # Try streaming first (preferred mode for real-time user experience)
                 streaming_request = SendStreamingMessageRequest(
                     id=uuid4().hex,
                     params=MessageSendParams(**payload),
                 )
                 debug_log(f"Sending streaming message to agent at {client.url}...")
 
+            # Try streaming first (preferred mode for real-time user experience)
+            try:
                 # Initialize streaming state variables
                 chunk_count = 0
                 final_state_text = ""

@@ -110,54 +110,115 @@ console = Console(theme=custom_theme)
     is_flag=True,
     help="Disable readline history (do not load or save chat history)",
 )
-def a2a(host, port, token, debug, multi_input, no_history):
+@click.option(
+    "--l9router",
+    is_flag=True,
+    help="Enable L9Router proxy mode (requires DEPLOYMENT_ID, L9ROUTER_AGENT_NAME, L9ROUTER_USER_ID)",
+)
+@click.option("--agent-name", default=None, help="Target agent name (L9Router mode)")
+@click.option("--user-id", default=None, help="User identifier (L9Router mode)")
+def a2a(host, port, token, debug, multi_input, no_history, l9router, agent_name, user_id):
     """Run A2A protocol client."""
 
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Read from environment if not provided
-    env_host = os.environ.get("A2A_HOST", "localhost")
-    env_port = os.environ.get("A2A_PORT", "8000")
-    env_token = os.environ.get("A2A_TOKEN", "")
+    # Check for L9Router mode from environment if not set via flag
+    if not l9router:
+        l9router = os.environ.get("L9ROUTER_MODE", "false").lower() in ["true", "1", "yes"]
 
-    # Enhanced popup prompt
-    def popup_input(prompt_text, default=None, password=False):
-        panel = Panel(
-            Align.left(prompt_text, vertical="middle"),
-            title="💬 Input Required",
-            border_style="prompt",
-            padding=(1, 2),
+    # L9Router mode: validate and configure
+    if l9router:
+        console.print("🔀 [info]L9Router proxy mode enabled[/info]")
+
+        # Read L9Router configuration
+        l9router_url = os.environ.get("L9ROUTER_URL", "http://localhost:9000")
+        deployment_id = os.environ.get("DEPLOYMENT_ID")
+
+        # Get agent_name and user_id from CLI args or environment
+        if not agent_name:
+            agent_name = os.environ.get("L9ROUTER_AGENT_NAME")
+        if not user_id:
+            user_id = os.environ.get("L9ROUTER_USER_ID")
+
+        # Validate required parameters
+        if not deployment_id:
+            console.print("[error]❌ DEPLOYMENT_ID environment variable is required for L9Router mode[/error]")
+            console.print("[info]Set it to a UUID, e.g.: export DEPLOYMENT_ID=550e8400-e29b-41d4-a716-446655440000[/info]")
+            sys.exit(1)
+
+        if not agent_name:
+            console.print("[error]❌ Agent name is required for L9Router mode[/error]")
+            console.print("[info]Use --agent-name or set L9ROUTER_AGENT_NAME environment variable[/info]")
+            sys.exit(1)
+
+        if not user_id:
+            console.print("[error]❌ User ID is required for L9Router mode[/error]")
+            console.print("[info]Use --user-id or set L9ROUTER_USER_ID environment variable[/info]")
+            sys.exit(1)
+
+        # Set environment variables for a2a_client to use
+        os.environ["L9ROUTER_MODE"] = "true"
+        os.environ["L9ROUTER_URL"] = l9router_url
+        os.environ["L9ROUTER_AGENT_NAME"] = agent_name
+        os.environ["L9ROUTER_USER_ID"] = user_id
+        os.environ["DEPLOYMENT_ID"] = deployment_id
+
+        # Parse L9Router URL to get host and port
+        from urllib.parse import urlparse
+        parsed = urlparse(l9router_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 9000
+
+        console.print(f"  📍 L9Router URL: {l9router_url}")
+        console.print(f"  🎯 Target Agent: {agent_name}")
+        console.print(f"  👤 User ID: {user_id}")
+        console.print(f"  🆔 Deployment ID: {deployment_id}")
+    else:
+        # Read from environment if not provided (standard A2A mode)
+        env_host = os.environ.get("A2A_HOST", "localhost")
+        env_port = os.environ.get("A2A_PORT", "8000")
+        env_token = os.environ.get("A2A_TOKEN", "")
+
+    # Skip prompts in L9Router mode (already configured)
+    if not l9router:
+        # Enhanced popup prompt
+        def popup_input(prompt_text, default=None, password=False):
+            panel = Panel(
+                Align.left(prompt_text, vertical="middle"),
+                title="💬 Input Required",
+                border_style="prompt",
+                padding=(1, 2),
+            )
+            console.print(panel)
+            return Prompt.ask("👉", default=default, password=password)
+
+        def simple_prompt(label: str, default: str = None, password: bool = False) -> str:
+            console.print(f"💬 [prompt]{label}[/prompt]", end="")
+            return Prompt.ask("", default=default, password=password)
+
+        # Welcome banner with version and configuration prompt
+        console.print(
+            Panel(
+                Align.center(
+                    f"🚀 [agent]agent-chat-cli[/agent] v{__version__}\n\n"
+                    f"🔧 A2A Client Setup\n"
+                    f"Set your Auth Key (or press Enter to skip)",
+                    vertical="middle",
+                ),
+                title="✨ Welcome",
+                border_style="bold cyan",
+                padding=(1, 2),
+            )
         )
-        console.print(panel)
-        return Prompt.ask("👉", default=default, password=password)
 
-    def simple_prompt(label: str, default: str = None, password: bool = False) -> str:
-        console.print(f"💬 [prompt]{label}[/prompt]", end="")
-        return Prompt.ask("", default=default, password=password)
-
-    # Welcome banner with version and configuration prompt
-    console.print(
-        Panel(
-            Align.center(
-                f"🚀 [agent]agent-chat-cli[/agent] v{__version__}\n\n"
-                f"🔧 A2A Client Setup\n"
-                f"Set your Auth Key (or press Enter to skip)",
-                vertical="middle",
-            ),
-            title="✨ Welcome",
-            border_style="bold cyan",
-            padding=(1, 2),
-        )
-    )
-
-    if not host:
+    if not l9router and not host:
         if env_host:
             host = env_host
         else:
             host = simple_prompt("[info]Enter host[/info]", default=None)
 
-    if not port:
+    if not l9router and not port:
         if env_port:
             try:
                 port = int(env_port)
@@ -173,7 +234,7 @@ def a2a(host, port, token, debug, multi_input, no_history):
                 )
                 sys.exit(1)
 
-    if token is None:
+    if not l9router and token is None:
         if env_token:
             token = env_token
         else:
