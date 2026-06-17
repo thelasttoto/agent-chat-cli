@@ -201,3 +201,145 @@ def test_command_with_arguments():
     assert handled is True
     assert output is not None
     assert "Message History" in output
+
+
+def test_newsession_command():
+    """Test /newsession creates new context ID."""
+    try:
+        from agent_chat_cli.a2a_client import get_session_context_id, reset_session
+
+        # Get initial session ID
+        initial_id = get_session_context_id()
+
+        # Reset session
+        new_id = reset_session()
+
+        # Verify new ID is different
+        assert new_id != initial_id
+        assert get_session_context_id() == new_id
+    except ImportError:
+        pytest.skip("Session management not available")
+
+
+def test_newsession_command_handler():
+    """Test /newsession command handler."""
+    register_default_commands()
+
+    turn_tracker = {'turn': 5}
+
+    context = {
+        'l9router_url': 'test',
+        'user_id': 'test',
+        'agent_name': 'test',
+        'turn_id': turn_tracker,
+        'history': [],
+    }
+
+    handled, output = process_command('/newsession', context)
+
+    assert handled is True
+    assert output is not None
+    assert "New Session Started" in output
+    assert turn_tracker['turn'] == 1  # Reset
+
+
+def test_newsession_aliases():
+    """Test /newsession aliases work correctly."""
+    register_default_commands()
+
+    turn_tracker = {'turn': 3}
+
+    context = {
+        'l9router_url': 'test',
+        'user_id': 'test',
+        'agent_name': 'test',
+        'turn_id': turn_tracker,
+        'history': [],
+    }
+
+    # Test /ns alias
+    handled, output = process_command('/ns', context)
+    assert handled is True
+    assert "New Session Started" in output
+    assert turn_tracker['turn'] == 1
+
+    # Reset for next test
+    turn_tracker['turn'] = 3
+
+    # Test /new alias
+    handled, output = process_command('/new', context)
+    assert handled is True
+    assert "New Session Started" in output
+    assert turn_tracker['turn'] == 1
+
+
+def test_sessioninfo_command():
+    """Test /sessioninfo command displays session information."""
+    register_default_commands()
+
+    turn_tracker = {'turn': 5}
+
+    context = {
+        'l9router_url': 'test',
+        'user_id': 'test',
+        'agent_name': 'test',
+        'turn_id': turn_tracker,
+        'history': [],
+    }
+
+    handled, output = process_command('/sessioninfo', context)
+
+    assert handled is True
+    assert output is not None
+    assert "Session Information" in output
+    assert "Session ID:" in output
+    assert "Duration:" in output
+    assert "Current Turn: 5" in output
+
+
+def test_sessioninfo_aliases():
+    """Test /sessioninfo aliases work correctly."""
+    register_default_commands()
+
+    context = {
+        'l9router_url': 'test',
+        'user_id': 'test',
+        'agent_name': 'test',
+        'turn_id': {'turn': 3},
+        'history': [],
+    }
+
+    # Test /si alias
+    handled, output = process_command('/si', context)
+    assert handled is True
+    assert "Session Information" in output
+
+    # Test /session alias
+    handled, output = process_command('/session', context)
+    assert handled is True
+    assert "Session Information" in output
+
+
+def test_status_includes_session_info():
+    """Test /status command includes session information."""
+    register_default_commands()
+
+    class FakeCallbackServer:
+        port = 8080
+
+    context = {
+        'l9router_url': 'http://localhost:9000',
+        'user_id': 'alice',
+        'agent_name': 'root_agent',
+        'callback_server': FakeCallbackServer(),
+        'turn_id': {'turn': 5},
+        'history': [],
+    }
+
+    handled, output = process_command('/status', context)
+
+    assert handled is True
+    assert output is not None
+    assert "Connection Status" in output
+    assert "Session ID:" in output
+    assert "Session Duration:" in output

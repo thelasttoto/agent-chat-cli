@@ -12,6 +12,95 @@ from .commands import ChatExitException, get_all_commands
 logger = logging.getLogger(__name__)
 
 
+def handle_newsession(args: list[str], context: dict[str, Any]) -> str:
+    """Start a new session with fresh context ID.
+
+    This creates a new conversation context, effectively starting
+    a clean slate with the agent. The previous conversation history
+    is lost from the agent's perspective.
+
+    Args:
+        args: Command arguments (unused)
+        context: Chat context (will use to reset turn counter)
+
+    Returns:
+        Confirmation message with new session ID
+    """
+    # Import here to avoid circular dependency
+    try:
+        from agent_chat_cli.a2a_client import (
+            reset_session,
+            get_session_context_id,
+        )
+
+        # Get old session ID for display
+        old_session_id = get_session_context_id()
+
+        # Reset session (generates new context_id)
+        try:
+            new_session_id = reset_session()
+        except RuntimeError as e:
+            # Edge case 1: Session reset during active processing
+            return f"❌ {str(e)}"
+
+        # Edge case 3: Reset turn counter if available (safe check)
+        turn_tracker = context.get('turn_id')
+        if turn_tracker and isinstance(turn_tracker, dict):
+            turn_tracker['turn'] = 1
+            logger.info("Turn counter reset to 1")
+
+        output = "\n🔄 New Session Started\n"
+        output += "=" * 50 + "\n"
+        output += f"  Previous Session: {old_session_id[:16]}...\n"
+        output += f"  New Session:      {new_session_id[:16]}...\n"
+        output += f"  Turn Counter:     Reset to 1\n"
+        output += "=" * 50 + "\n"
+        output += "\n[dim]The agent will treat this as a brand new conversation.[/dim]"
+
+        return output
+
+    except ImportError as e:
+        logger.error(f"Failed to import session management: {e}")
+        return "❌ Session management not available in this mode"
+
+
+def handle_sessioninfo(args: list[str], context: dict[str, Any]) -> str:
+    """Display current session information.
+
+    Args:
+        args: Command arguments (unused)
+        context: Chat context with turn tracking
+
+    Returns:
+        Formatted session information
+    """
+    try:
+        from agent_chat_cli.a2a_client import get_session_info
+
+        info = get_session_info()
+        duration = info['duration']
+
+        output = "\n📊 Current Session Information\n"
+        output += "=" * 50 + "\n"
+        output += f"  Session ID:  {info['context_id']}\n"
+        output += f"  Started:     {info['started_at'].strftime('%Y-%m-%d %H:%M:%S')}\n"
+        output += f"  Duration:    {int(duration.total_seconds())}s\n"
+
+        # Edge case 3: Safe check for turn tracker
+        turn_tracker = context.get('turn_id')
+        if turn_tracker and isinstance(turn_tracker, dict):
+            current_turn = turn_tracker.get('turn', 0)
+            output += f"  Current Turn: {current_turn}\n"
+
+        output += "=" * 50
+
+        return output
+
+    except ImportError as e:
+        logger.error(f"Failed to import session info: {e}")
+        return "❌ Session information not available in this mode"
+
+
 def handle_help(args: list[str], context: dict[str, Any]) -> str:
     """Display all available commands.
 
@@ -82,7 +171,6 @@ def handle_status(args: list[str], context: dict[str, Any]) -> str:
     l9router_url = context.get('l9router_url', 'N/A')
     user_id = context.get('user_id', 'N/A')
     agent_name = context.get('agent_name', 'N/A')
-    turn_id = context.get('turn_id', {}).get('id', 0)
     callback_server = context.get('callback_server')
 
     output = "\n📡 Connection Status:\n"
@@ -96,7 +184,23 @@ def handle_status(args: list[str], context: dict[str, Any]) -> str:
     else:
         output += f"  Callback Server: Not running\n"
 
-    output += f"  Current Turn:    {turn_id}\n"
+    # Add session info if available
+    try:
+        from agent_chat_cli.a2a_client import get_session_info
+
+        session_info = get_session_info()
+        duration = int(session_info['duration'].total_seconds())
+        output += f"  Session ID:      {session_info['context_id'][:16]}...\n"
+        output += f"  Session Duration: {duration}s\n"
+    except ImportError:
+        pass  # Session info not available
+
+    # Edge case 3: Safe check for turn tracker
+    turn_tracker = context.get('turn_id')
+    if turn_tracker and isinstance(turn_tracker, dict):
+        current_turn = turn_tracker.get('turn', 0)
+        output += f"  Current Turn:    {current_turn}\n"
+
     output += "=" * 50
 
     return output
@@ -210,6 +314,20 @@ def register_default_commands() -> None:
         description="Show recent message history (default: last 10 messages)",
         handler=handle_history,
         aliases=["hist"],
+    )
+
+    register_command(
+        name="newsession",
+        description="Start a new session with fresh conversation context",
+        handler=handle_newsession,
+        aliases=["ns", "new"],
+    )
+
+    register_command(
+        name="sessioninfo",
+        description="Display current session information",
+        handler=handle_sessioninfo,
+        aliases=["si", "session"],
     )
 
     logger.debug("Registered all default commands")

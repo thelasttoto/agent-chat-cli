@@ -246,6 +246,25 @@ async def run_chat_loop(
                             extract_response_from_callback(callback_msg)
                         )
 
+                        # Edge case 2: Check if callback is from old session (after /newsession)
+                        # Log warning but still display the message
+                        if callback_msg.get('original_request', {}).get('conversation_id'):
+                            msg_conv_id = callback_msg['original_request']['conversation_id']
+                            try:
+                                from agent_chat_cli.a2a_client import get_session_context_id
+                                current_conv_id = get_session_context_id()
+
+                                if msg_conv_id != current_conv_id:
+                                    logger.warning(
+                                        f"⚠️ Received callback from old session: "
+                                        f"{msg_conv_id[:8]}... (current: {current_conv_id[:8]}...)"
+                                    )
+                                    console.print(
+                                        "[dim]⚠️ Response from previous session[/dim]"
+                                    )
+                            except ImportError:
+                                pass  # Session management not available
+
                         # Display detective analysis if present
                         if detective_analysis:
                             analysis_text = format_detective_analysis(detective_analysis)

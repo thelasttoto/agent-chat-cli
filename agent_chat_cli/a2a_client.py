@@ -116,11 +116,87 @@ if L9ROUTER_MODE:
 
 console = Console()
 
-SESSION_CONTEXT_ID = uuid4().hex
+# Session state (mutable)
+from datetime import datetime
+
+_session_state = {
+    "context_id": uuid4().hex,
+    "started_at": datetime.now(),
+}
 
 # Turn counter for L9Router mode (will be replaced by tracker dict)
 _turn_counter = 0
 _turn_tracker = None  # Will be set by main()
+
+# Track if message processing is active (for edge case handling)
+_processing_active = False
+
+
+def get_session_context_id() -> str:
+    """Get current session context ID.
+
+    Returns:
+        Current session context ID (conversation_id/contextId)
+    """
+    return _session_state["context_id"]
+
+
+def reset_session() -> str:
+    """Reset session with new context ID.
+
+    This creates a fresh conversation context, effectively starting
+    a new session with the agent. The previous conversation context
+    is lost from the agent's perspective.
+
+    Returns:
+        New session context ID
+
+    Raises:
+        RuntimeError: If called during active message processing
+    """
+    global _turn_counter
+
+    # Edge case 1: Don't allow reset during active processing
+    if _processing_active:
+        raise RuntimeError(
+            "Cannot reset session while message is being processed. "
+            "Please wait for the current response to complete."
+        )
+
+    new_context_id = uuid4().hex
+    _session_state["context_id"] = new_context_id
+    _session_state["started_at"] = datetime.now()
+
+    # Reset turn counter
+    _turn_counter = 0
+    if _turn_tracker is not None:
+        _turn_tracker["turn"] = 1
+
+    logger.info(f"New session started: {new_context_id}")
+    return new_context_id
+
+
+def get_session_info() -> dict:
+    """Get current session information.
+
+    Returns:
+        Dict with context_id, started_at, duration
+    """
+    return {
+        "context_id": _session_state["context_id"],
+        "started_at": _session_state["started_at"],
+        "duration": datetime.now() - _session_state["started_at"],
+    }
+
+
+def set_processing_active(active: bool) -> None:
+    """Set whether message processing is currently active.
+
+    Args:
+        active: True if processing is active, False otherwise
+    """
+    global _processing_active
+    _processing_active = active
 
 
 def get_next_turn_id() -> int:
@@ -611,7 +687,7 @@ def create_send_message_payload(text: str) -> dict[str, Any]:
             agent_name=L9ROUTER_AGENT_NAME,
             user_id=L9ROUTER_USER_ID,
             deployment_id=DEPLOYMENT_ID,
-            conversation_id=SESSION_CONTEXT_ID,
+            conversation_id=get_session_context_id(),
             turn_id=get_next_turn_id(),
         )
 
@@ -624,7 +700,7 @@ def create_send_message_payload(text: str) -> dict[str, Any]:
                 "role": "user",
                 "parts": [{"type": "text", "text": text}],
                 "messageId": uuid4().hex,
-                "contextId": SESSION_CONTEXT_ID,
+                "contextId": get_session_context_id(),
             }
         }
 
@@ -845,6 +921,10 @@ async def handle_user_input(user_input: str, token: str = None) -> None:
       - TaskStatusUpdateEvent: Status updates (usually empty content)
     """
     debug_log(f"Received user input: {user_input}")
+
+    # Edge case 1: Set processing flag to prevent session reset during processing
+    set_processing_active(True)
+
     try:
         # Prepare headers for authentication if token is provided
         headers = {}
@@ -1488,6 +1568,9 @@ async def handle_user_input(user_input: str, token: str = None) -> None:
     except Exception as e:
         print(f"ERROR: Exception occurred: {str(e)}")
         raise
+    finally:
+        # Edge case 1: Always clear processing flag when done
+        set_processing_active(False)
 
 
 async def fetch_agent_card(host, port, token: str, tls: bool) -> AgentCard:
