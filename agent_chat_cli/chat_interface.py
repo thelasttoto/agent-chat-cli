@@ -62,17 +62,31 @@ async def spinner(
         await asyncio.sleep(0.1)
 
 
-def render_answer(answer: str, agent_name: str = "Agent"):
+def render_answer(answer: str, agent_name: str = "Agent", turn_id: int | None = None):
+    """
+    Render agent response in a formatted panel.
+
+    Args:
+        answer: The agent's response text
+        agent_name: Name of the agent
+        turn_id: Optional turn ID to display in the panel title
+    """
     answer = answer.strip()
     if re.match(r"^b?[\"']?\{.*\}['\"]?$", answer):
         console.print("[warning]⚠️  Skipping raw byte/dict output.[/warning]")
         return
 
+    # Build title with optional turn_id
+    if turn_id is not None:
+        title = f"[agent]{agent_name} Response [Turn {turn_id}][/agent]"
+    else:
+        title = f"[agent]{agent_name} Response[/agent]"
+
     console.print("\n")
     console.print(
         Panel(
             Markdown(answer),
-            title=f"[agent]{agent_name} Response[/agent]",
+            title=title,
             border_style="agent",
             padding=(1, 2),
         )
@@ -122,7 +136,23 @@ async def run_chat_loop(
     history_key: str = "agent",
     multi_input_enabled: bool = False,
     no_history: bool = False,
+    message_queue: asyncio.Queue | None = None,
+    current_turn_tracker: dict | None = None,
 ):
+    """
+    Run the chat loop for agent interaction.
+
+    Args:
+        handle_user_input: Async function to handle user input
+        agent_name: Name of the agent
+        skills_description: Description of agent skills
+        skills_examples: Example skills
+        history_key: Key for history file
+        multi_input_enabled: Enable multi-line input
+        no_history: Disable history
+        message_queue: Optional queue for incoming callback messages
+        current_turn_tracker: Optional dict with 'turn' key for tracking turn IDs
+    """
     print_welcome_message(agent_name, skills_description, skills_examples)
 
     if no_history:
@@ -174,15 +204,96 @@ async def run_chat_loop(
         signal.signal(signal.SIGTSTP, signal_handler)  # Control+Z (suspend)
         signal.signal(signal.SIGCONT, signal_handler)  # Resume after suspension
 
+    # Start callback message consumer if queue is provided
+    consumer_task = None
+    # Shared state for current prompt (used to re-display after callback messages)
+    current_prompt = {"text": ""}
+
+    if message_queue is not None:
+        import logging
+        logger = logging.getLogger(__name__)
+
+        async def consume_callback_messages():
+            """Consume and display messages from callback queue."""
+            logger.info("Callback message consumer started")
+            try:
+                while True:
+                    # Wait for incoming callback message
+                    callback_msg = await message_queue.get()
+                    logger.info(f"💬 Processing callback message from queue")
+                    logger.debug(f"Callback message content: {callback_msg}")
+
+                    try:
+                        # Extract message text and turn_id from callback
+                        # Import here to avoid circular dependency
+                        from agent_chat_cli.l9router_adapter import (
+                            extract_response_from_callback,
+                            format_detective_analysis,
+                        )
+
+                        message_text, turn_id, detective_analysis = (
+                            extract_response_from_callback(callback_msg)
+                        )
+
+                        # Display detective analysis if present
+                        if detective_analysis:
+                            analysis_text = format_detective_analysis(detective_analysis)
+                            console.print(f"[dim]{analysis_text}[/dim]")
+
+                            # Check for blocked messages
+                            if detective_analysis.get("verdict") == "block":
+                                console.print(
+                                    "[error]🚫 Message was blocked by security analysis[/error]"
+                                )
+                                continue
+
+                        # Display agent response with turn_id
+                        if message_text:
+                            render_answer(message_text, agent_name, turn_id)
+                        else:
+                            logger.warning("Empty message text in callback")
+
+                        # Re-display the input prompt after showing the response
+                        if current_prompt["text"]:
+                            print(current_prompt["text"], end="", flush=True)
+
+                    except Exception as e:
+                        logger.error(f"Error processing callback message: {e}", exc_info=True)
+                        console.print(
+                            f"[error]⚠️  Error displaying callback message: {e}[/error]"
+                        )
+
+            except asyncio.CancelledError:
+                logger.info("Callback message consumer cancelled")
+                raise
+
+        consumer_task = asyncio.create_task(consume_callback_messages())
+
     try:
         while True:
             try:
-                prompt_prefix = "💬 [no-history] You: " if no_history else "💬 You: "
+                # Build prompt with turn_id if tracker is provided
+                if current_turn_tracker is not None:
+                    current_turn = current_turn_tracker.get("turn", 0)
+                    if no_history:
+                        prompt_prefix = f"💬 [no-history] You [Turn {current_turn}]: "
+                    else:
+                        prompt_prefix = f"💬 You [Turn {current_turn}]: "
+                else:
+                    prompt_prefix = "💬 [no-history] You: " if no_history else "💬 You: "
+
+                # Store current prompt for re-display after callback messages
+                current_prompt["text"] = prompt_prefix
+
                 if multi_input_enabled:
                     console.print(f"{prompt_prefix}(use ctrl+D to end input)")
-                    user_input = sys.stdin.read().strip()
+                    # Use run_in_executor to make blocking stdin.read() non-blocking
+                    loop = asyncio.get_event_loop()
+                    user_input = await loop.run_in_executor(None, lambda: sys.stdin.read().strip())
                 else:
-                    user_input = input(prompt_prefix).strip()
+                    # Use run_in_executor to make blocking input() non-blocking
+                    loop = asyncio.get_event_loop()
+                    user_input = await loop.run_in_executor(None, lambda: input(prompt_prefix).strip())
                 if user_input.lower() in ["exit", "quit"]:
                     console.print(
                         f"\n[agent]👋 Thank you for using {agent_name}. Goodbye![/agent]"
@@ -241,6 +352,14 @@ async def run_chat_loop(
                 console.print("\n[agent]👋 Chat interrupted. Goodbye![/agent]")
                 break
     finally:
+        # Cancel callback consumer if it was started
+        if consumer_task is not None:
+            consumer_task.cancel()
+            try:
+                await consumer_task
+            except asyncio.CancelledError:
+                pass
+
         if not no_history:
             try:
                 readline.write_history_file(history_file)

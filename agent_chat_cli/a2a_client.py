@@ -118,15 +118,23 @@ console = Console()
 
 SESSION_CONTEXT_ID = uuid4().hex
 
-# Turn counter for L9Router mode
+# Turn counter for L9Router mode (will be replaced by tracker dict)
 _turn_counter = 0
+_turn_tracker = None  # Will be set by main()
 
 
 def get_next_turn_id() -> int:
     """Get next turn ID for L9Router message tracking."""
-    global _turn_counter
-    _turn_counter += 1
-    return _turn_counter
+    global _turn_counter, _turn_tracker
+
+    # Use tracker if available (preferred), otherwise use global counter
+    if _turn_tracker is not None:
+        current = _turn_tracker.get("turn", 1)
+        _turn_tracker["turn"] = current + 1
+        return current
+    else:
+        _turn_counter += 1
+        return _turn_counter
 
 
 def debug_log(message: str) -> None:
@@ -1554,7 +1562,8 @@ async def fetch_agent_card(host, port, token: str, tls: bool) -> AgentCard:
         return final_agent_card_to_use
 
 
-def main(host, port, token, tls, multi_input_enabled=False, no_history=False):
+async def async_main(host, port, token, tls, multi_input_enabled=False, no_history=False):
+    """Async version of main to handle callback server lifecycle."""
     # Get CLI version
     cli_version = "unknown"
     try:
@@ -1565,7 +1574,7 @@ def main(host, port, token, tls, multi_input_enabled=False, no_history=False):
         pass
 
     # Fetch the agent card before running the chat loop
-    agent_card = asyncio.run(fetch_agent_card(host, port, token, tls))
+    agent_card = await fetch_agent_card(host, port, token, tls)
     global agent_name
     agent_name = agent_card.name if hasattr(agent_card, "name") else "Agent"
 
@@ -1599,15 +1608,89 @@ def main(host, port, token, tls, multi_input_enabled=False, no_history=False):
     logger.debug(f"Skills description: {skills_description}")
     logger.debug(f"Skills examples: {skills_examples}")
 
-    # Clear the console and print a header
-    console.clear()
-    asyncio.run(
-        run_chat_loop(
+    # L9Router mode: Setup callback server and register
+    callback_server = None
+    message_queue = None
+    current_turn_tracker = {"turn": 1}  # Track current turn starting from 1
+
+    # Set global turn tracker for get_next_turn_id()
+    global _turn_tracker
+    _turn_tracker = current_turn_tracker
+
+    if L9ROUTER_MODE:
+        try:
+            # Create message queue for callback messages
+            message_queue = asyncio.Queue(maxsize=100)
+
+            # Find available port for callback server
+            import os
+            from agent_chat_cli.callback_server import CallbackServer, find_available_port
+
+            callback_port = int(os.environ.get("CALLBACK_PORT", 0))
+            if callback_port == 0:
+                callback_port = find_available_port(start_port=8080)
+
+            # Create and start callback server
+            callback_server = CallbackServer(port=callback_port, message_queue=message_queue)
+            await callback_server.start()
+
+            callback_url = callback_server.get_callback_url(host="localhost")
+            console.print(f"[info]✅ Callback server started: {callback_url}[/info]")
+
+            # Register callback with L9Router
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                registration_payload = {
+                    "callback_url": callback_url,
+                    "agent_name": L9ROUTER_USER_ID,  # Use user_id as agent_name
+                }
+
+                logger.info(f"🔧 Registering callback with L9Router: {registration_payload}")
+                console.print(f"[dim]Registering callback: {callback_url} as '{L9ROUTER_USER_ID}'[/dim]")
+
+                response = await client.post(
+                    f"{L9ROUTER_URL}/register-callback",
+                    json=registration_payload,
+                )
+                response.raise_for_status()
+
+                registration_result = response.json()
+                logger.info(f"✅ Registration successful: {registration_result}")
+                console.print(
+                    f"[info]✅ Registered with L9Router as '{L9ROUTER_USER_ID}'[/info]"
+                )
+                logger.debug(f"Registration result: {registration_result}")
+
+        except Exception as e:
+            console.print(f"[error]❌ Failed to setup L9Router callback: {e}[/error]")
+            logger.error(f"Callback setup error: {e}", exc_info=True)
+            # Stop callback server if it was started
+            if callback_server:
+                await callback_server.stop()
+            raise
+
+    try:
+        # Clear the console and print a header
+        console.clear()
+        await run_chat_loop(
             lambda user_input: handle_user_input(user_input, token),
             agent_name=agent_name,
             skills_description=skills_description,
             skills_examples=skills_examples,
             multi_input_enabled=multi_input_enabled,
             no_history=no_history,
+            message_queue=message_queue,
+            current_turn_tracker=current_turn_tracker,
         )
+    finally:
+        # Cleanup: Stop callback server if running
+        if callback_server:
+            console.print("[info]Stopping callback server...[/info]")
+            await callback_server.stop()
+            console.print("[info]✅ Callback server stopped[/info]")
+
+
+def main(host, port, token, tls, multi_input_enabled=False, no_history=False):
+    """Entry point that runs async_main."""
+    asyncio.run(
+        async_main(host, port, token, tls, multi_input_enabled, no_history)
     )
