@@ -16,6 +16,9 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.theme import Theme
 
+from .commands import ChatExitException, process_command
+from .command_handlers import register_default_commands
+
 # Theme for general-purpose agent
 custom_theme = Theme(
     {"info": "cyan", "warning": "yellow", "error": "red", "agent": "green"}
@@ -108,7 +111,7 @@ def print_welcome_message(
         f"[agent]🚀 Welcome to {agent_name} CLI[/agent]\n\n"
         "This agent helps you interact with tools dynamically.\n"
         "Type your question and hit enter.\n"
-        "Type 'exit' or 'quit' to leave. Type 'clear' to clear the screen. Type 'history' to view chat history."
+        "Type '/exit' or '/quit' to leave. Type '/clear' to clear the screen. Type '/history' to view chat history."
     )
     if skills_description:
         welcome_text += f"\n\n[info]Skills Description:[/info]\n{skills_description}"
@@ -116,6 +119,9 @@ def print_welcome_message(
         # skills_examples is already a list
         bullets = "\n".join(f"- {ex}" for ex in skills_examples)
         welcome_text += f"\n\n[info]Example Skills:[/info]\n{bullets}"
+
+    # Add command help
+    welcome_text += "\n\n[dim]Type [bold]/help[/bold] for available commands[/dim]"
 
     console.print(
         Panel(
@@ -138,6 +144,7 @@ async def run_chat_loop(
     no_history: bool = False,
     message_queue: asyncio.Queue | None = None,
     current_turn_tracker: dict | None = None,
+    callback_server=None,
 ):
     """
     Run the chat loop for agent interaction.
@@ -152,7 +159,11 @@ async def run_chat_loop(
         no_history: Disable history
         message_queue: Optional queue for incoming callback messages
         current_turn_tracker: Optional dict with 'turn' key for tracking turn IDs
+        callback_server: Optional callback server instance for command context
     """
+    # Register default commands on first run
+    register_default_commands()
+
     print_welcome_message(agent_name, skills_description, skills_examples)
 
     if no_history:
@@ -294,32 +305,39 @@ async def run_chat_loop(
                     # Use run_in_executor to make blocking input() non-blocking
                     loop = asyncio.get_event_loop()
                     user_input = await loop.run_in_executor(None, lambda: input(prompt_prefix).strip())
-                if user_input.lower() in ["exit", "quit"]:
-                    console.print(
-                        f"\n[agent]👋 Thank you for using {agent_name}. Goodbye![/agent]"
-                    )
-                    break
-                elif user_input.lower() == "clear":
-                    clear_screen()
-                    print_welcome_message(agent_name)
-                    continue
-                elif user_input.lower() == "history":
-                    if no_history:
+
+                # Clear current prompt since we got input
+                current_prompt["text"] = ""
+
+                # Check if it's a command
+                if user_input.startswith('/'):
+                    # Build command context
+                    command_context = {
+                        'l9router_url': os.environ.get('L9ROUTER_URL', 'N/A'),
+                        'user_id': os.environ.get('L9ROUTER_USER_ID', 'N/A'),
+                        'agent_name': agent_name,
+                        'callback_server': callback_server,
+                        'turn_id': current_turn_tracker if current_turn_tracker else {},
+                        'history': [],  # Could be populated with actual message history
+                    }
+
+                    try:
+                        handled, output = process_command(user_input, command_context)
+                        if handled:
+                            if output:
+                                console.print(output)
+                            continue
+                        else:
+                            # Unknown command
+                            console.print(f"[error]❌ Unknown command: {user_input}[/error]")
+                            console.print("[dim]Type [bold]/help[/bold] for available commands[/dim]")
+                            continue
+                    except ChatExitException:
                         console.print(
-                            "[warning]⚠️  History is disabled (--no-history).[/warning]"
+                            f"\n[agent]👋 Thank you for using {agent_name}. Goodbye![/agent]"
                         )
-                    else:
-                        console.print(
-                            "\n[agent]📜 Chat History (last 100 entries):[/agent]"
-                        )
-                        history = [
-                            readline.get_history_item(i)
-                            for i in range(1, readline.get_current_history_length() + 1)
-                        ]
-                        for idx, entry in enumerate(history[-100:], 1):
-                            console.print(f"{idx}: {entry}")
-                        console.print()
-                    continue
+                        break
+
                 if user_input:
                     if not no_history:
                         readline.add_history(user_input)

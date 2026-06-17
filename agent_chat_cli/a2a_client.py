@@ -1680,6 +1680,7 @@ async def async_main(host, port, token, tls, multi_input_enabled=False, no_histo
             no_history=no_history,
             message_queue=message_queue,
             current_turn_tracker=current_turn_tracker,
+            callback_server=callback_server,
         )
     finally:
         # Cleanup: Stop callback server if running
