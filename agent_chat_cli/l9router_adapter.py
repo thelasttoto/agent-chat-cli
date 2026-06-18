@@ -189,96 +189,22 @@ def extract_agent_response(a2a_response) -> tuple[str, dict | None]:
         raise ValueError(f"Failed to extract agent response: {e}") from e
 
 
+# DEPRECATED: Callback-based communication removed
+# Responses now come via A2A streaming, not callbacks
+# This function is kept for reference but should not be used
 def extract_response_from_callback(response_message: dict) -> tuple[str, int | None, dict | None]:
     """
-    Extract agent response from L9Router ResponseMessage callback.
+    DEPRECATED: Extract agent response from L9Router ResponseMessage callback.
 
-    This function processes the ResponseMessage sent to the callback endpoint
-    by L9Router after routing a USER_MSG to an agent and receiving the response.
+    This function is deprecated as L9Router no longer uses callbacks.
+    Responses now come directly via A2A streaming.
 
-    Args:
-        response_message: ResponseMessage dict from L9Router callback
-            Expected structure:
-            {
-                "result": {
-                    "status": "routed",
-                    "message_id": "...",
-                    "agent_name": "...",
-                    "user_id": "...",
-                    "direction": "agent_to_user",
-                    "detective_analysis": {...}
-                },
-                "original_request": {
-                    "type": "USER_MSG",
-                    "message": "...",
-                    "turn_id": 1,
-                    ...
-                },
-                "request_id": "...",
-                "timestamp": "..."
-            }
-
-    Returns:
-        Tuple of (message_text, turn_id, detective_analysis)
-        - message_text: The agent's response message
-        - turn_id: Turn ID from original request (or None)
-        - detective_analysis: Detective analysis dict (or None)
-
-    Raises:
-        ValueError: If response format is invalid
-
-    Example:
-        >>> callback_msg = {...}  # ResponseMessage from L9Router
-        >>> text, turn_id, analysis = extract_response_from_callback(callback_msg)
-        >>> print(f"Agent response (turn {turn_id}): {text}")
+    Kept for reference only - do not use.
     """
-    try:
-        logger.info("📦 Extracting response from callback")
-
-        # Extract result containing routing info
-        result = response_message.get("result", {})
-        logger.debug(f"Result: {result}")
-
-        # Get detective analysis from result
-        detective_analysis = result.get("detective_analysis")
-
-        # Extract original request to get turn_id and message
-        original_request = response_message.get("original_request", {})
-        logger.debug(f"Original request keys: {list(original_request.keys())}")
-
-        # Get turn_id from original request
-        turn_id = original_request.get("turn_id")
-
-        # Get the message from original request
-        # In L9Router's ResponseMessage, the original_request contains the USER_MSG
-        # that was sent to the agent. The actual agent response would come through
-        # another callback when the agent responds back through L9Router.
-
-        # However, based on the L9Router flow, when an agent responds, it sends
-        # a USER_MSG with direction="agent_to_user" back through L9Router,
-        # which then calls the user's callback with the ResponseMessage.
-
-        # So we need to check if the original_request is the agent's response
-        message_text = ""
-        message_field = original_request.get("message")
-        logger.debug(f"Message field type: {type(message_field)}, value: {message_field if isinstance(message_field, str) and len(message_field) < 200 else '(too long)'}")
-
-        if isinstance(message_field, str):
-            # Message is already a string, use directly
-            message_text = message_field
-        elif isinstance(message_field, dict):
-            # Message is a dict, might be nested
-            message_text = message_field.get("message", "")
-        else:
-            logger.warning(f"Unexpected message field type: {type(message_field)}")
-
-        logger.info(f"✅ Extracted message from callback: turn_id={turn_id}, message_len={len(message_text)}, preview={message_text[:50] if message_text else '(empty)'}...")
-
-        return message_text, turn_id, detective_analysis
-
-    except Exception as e:
-        logger.error(f"Error extracting callback response: {e}")
-        raise ValueError(f"Failed to extract callback response: {e}") from e
+    raise DeprecationWarning(
+        "extract_response_from_callback is deprecated. "
+        "L9Router now uses A2A push architecture - responses come via A2A streaming."
+    )
 
 
 def format_detective_analysis(analysis: dict) -> str:

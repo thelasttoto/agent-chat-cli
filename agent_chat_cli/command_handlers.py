@@ -171,18 +171,13 @@ def handle_status(args: list[str], context: dict[str, Any]) -> str:
     l9router_url = context.get('l9router_url', 'N/A')
     user_id = context.get('user_id', 'N/A')
     agent_name = context.get('agent_name', 'N/A')
-    callback_server = context.get('callback_server')
 
     output = "\n📡 Connection Status:\n"
     output += "=" * 50 + "\n"
     output += f"  L9Router URL:    {l9router_url}\n"
     output += f"  User ID:         {user_id}\n"
     output += f"  Agent Name:      {agent_name}\n"
-
-    if callback_server:
-        output += f"  Callback Server: Running on port {callback_server.port}\n"
-    else:
-        output += f"  Callback Server: Not running\n"
+    output += f"  Mode:            A2A Push (no callbacks)\n"
 
     # Add session info if available
     try:

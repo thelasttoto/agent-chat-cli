@@ -887,6 +887,7 @@ def _flatten_text_from_message_dict(message: Any) -> str:
                         pass
 
                 texts.append(text_val)
+
         return "".join(texts)
     except Exception:
         return ""
@@ -1263,7 +1264,8 @@ async def handle_user_input(user_input: str, token: str = None) -> None:
                     # tool_notification_*: Already handled above with continue at lines 687, 698
                     # execution_plan_*: Already handled above with continue at lines 677, 682, 686
                     # By this point, we only have streaming_result artifacts (status text is skipped)
-                    if text and artifact_name:
+                    # EXCEPTION: In L9Router mode, also process status messages (no artifacts used)
+                    if text and (artifact_name or L9ROUTER_MODE):
                         # Stop spinner if not already stopped (fallback for streaming content)
                         if not spinner_stopped:
                             notify_streaming_started()
@@ -1691,9 +1693,7 @@ async def async_main(host, port, token, tls, multi_input_enabled=False, no_histo
     logger.debug(f"Skills description: {skills_description}")
     logger.debug(f"Skills examples: {skills_examples}")
 
-    # L9Router mode: Setup callback server and register
-    callback_server = None
-    message_queue = None
+    # L9Router mode: No callback setup needed (A2A push-based)
     current_turn_tracker = {"turn": 1}  # Track current turn starting from 1
 
     # Set global turn tracker for get_next_turn_id()
@@ -1701,76 +1701,21 @@ async def async_main(host, port, token, tls, multi_input_enabled=False, no_histo
     _turn_tracker = current_turn_tracker
 
     if L9ROUTER_MODE:
-        try:
-            # Create message queue for callback messages
-            message_queue = asyncio.Queue(maxsize=100)
+        console.print("[info]✅ L9Router mode enabled (A2A push-based)[/info]")
+        console.print("[dim]No callback setup required - L9Router pushes via A2A[/dim]")
+        logger.info("L9Router mode: Using A2A push architecture (no callbacks)")
 
-            # Find available port for callback server
-            import os
-            from agent_chat_cli.callback_server import CallbackServer, find_available_port
-
-            callback_port = int(os.environ.get("CALLBACK_PORT", 0))
-            if callback_port == 0:
-                callback_port = find_available_port(start_port=8080)
-
-            # Create and start callback server
-            callback_server = CallbackServer(port=callback_port, message_queue=message_queue)
-            await callback_server.start()
-
-            callback_url = callback_server.get_callback_url(host="localhost")
-            console.print(f"[info]✅ Callback server started: {callback_url}[/info]")
-
-            # Register callback with L9Router
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                registration_payload = {
-                    "callback_url": callback_url,
-                    "agent_name": L9ROUTER_USER_ID,  # Use user_id as agent_name
-                }
-
-                logger.info(f"🔧 Registering callback with L9Router: {registration_payload}")
-                console.print(f"[dim]Registering callback: {callback_url} as '{L9ROUTER_USER_ID}'[/dim]")
-
-                response = await client.post(
-                    f"{L9ROUTER_URL}/register-callback",
-                    json=registration_payload,
-                )
-                response.raise_for_status()
-
-                registration_result = response.json()
-                logger.info(f"✅ Registration successful: {registration_result}")
-                console.print(
-                    f"[info]✅ Registered with L9Router as '{L9ROUTER_USER_ID}'[/info]"
-                )
-                logger.debug(f"Registration result: {registration_result}")
-
-        except Exception as e:
-            console.print(f"[error]❌ Failed to setup L9Router callback: {e}[/error]")
-            logger.error(f"Callback setup error: {e}", exc_info=True)
-            # Stop callback server if it was started
-            if callback_server:
-                await callback_server.stop()
-            raise
-
-    try:
-        # Clear the console and print a header
-        console.clear()
-        await run_chat_loop(
-            lambda user_input: handle_user_input(user_input, token),
-            agent_name=agent_name,
-            skills_description=skills_description,
-            skills_examples=skills_examples,
-            multi_input_enabled=multi_input_enabled,
-            no_history=no_history,
-            message_queue=message_queue,
-            current_turn_tracker=current_turn_tracker,
-            callback_server=callback_server,
-        )
-    finally:
-        # Cleanup: Stop callback server if running
-        if callback_server:
-            console.print("[info]Stopping callback server...[/info]")
-            await callback_server.stop()
-            console.print("[info]✅ Callback server stopped[/info]")
+    # Clear the console and print a header
+    console.clear()
+    await run_chat_loop(
+        lambda user_input: handle_user_input(user_input, token),
+        agent_name=agent_name,
+        skills_description=skills_description,
+        skills_examples=skills_examples,
+        multi_input_enabled=multi_input_enabled,
+        no_history=no_history,
+        current_turn_tracker=current_turn_tracker,
+    )
 
 
 def main(host, port, token, tls, multi_input_enabled=False, no_history=False):

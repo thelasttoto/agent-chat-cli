@@ -142,9 +142,7 @@ async def run_chat_loop(
     history_key: str = "agent",
     multi_input_enabled: bool = False,
     no_history: bool = False,
-    message_queue: asyncio.Queue | None = None,
     current_turn_tracker: dict | None = None,
-    callback_server=None,
 ):
     """
     Run the chat loop for agent interaction.
@@ -157,9 +155,7 @@ async def run_chat_loop(
         history_key: Key for history file
         multi_input_enabled: Enable multi-line input
         no_history: Disable history
-        message_queue: Optional queue for incoming callback messages
         current_turn_tracker: Optional dict with 'turn' key for tracking turn IDs
-        callback_server: Optional callback server instance for command context
     """
     # Register default commands on first run
     register_default_commands()
@@ -215,89 +211,8 @@ async def run_chat_loop(
         signal.signal(signal.SIGTSTP, signal_handler)  # Control+Z (suspend)
         signal.signal(signal.SIGCONT, signal_handler)  # Resume after suspension
 
-    # Start callback message consumer if queue is provided
-    consumer_task = None
-    # Shared state for current prompt (used to re-display after callback messages)
+    # Shared state for current prompt
     current_prompt = {"text": ""}
-
-    if message_queue is not None:
-        import logging
-        logger = logging.getLogger(__name__)
-
-        async def consume_callback_messages():
-            """Consume and display messages from callback queue."""
-            logger.info("Callback message consumer started")
-            try:
-                while True:
-                    # Wait for incoming callback message
-                    callback_msg = await message_queue.get()
-                    logger.info(f"💬 Processing callback message from queue")
-                    logger.debug(f"Callback message content: {callback_msg}")
-
-                    try:
-                        # Extract message text and turn_id from callback
-                        # Import here to avoid circular dependency
-                        from agent_chat_cli.l9router_adapter import (
-                            extract_response_from_callback,
-                            format_detective_analysis,
-                        )
-
-                        message_text, turn_id, detective_analysis = (
-                            extract_response_from_callback(callback_msg)
-                        )
-
-                        # Edge case 2: Check if callback is from old session (after /newsession)
-                        # Log warning but still display the message
-                        if callback_msg.get('original_request', {}).get('conversation_id'):
-                            msg_conv_id = callback_msg['original_request']['conversation_id']
-                            try:
-                                from agent_chat_cli.a2a_client import get_session_context_id
-                                current_conv_id = get_session_context_id()
-
-                                if msg_conv_id != current_conv_id:
-                                    logger.warning(
-                                        f"⚠️ Received callback from old session: "
-                                        f"{msg_conv_id[:8]}... (current: {current_conv_id[:8]}...)"
-                                    )
-                                    console.print(
-                                        "[dim]⚠️ Response from previous session[/dim]"
-                                    )
-                            except ImportError:
-                                pass  # Session management not available
-
-                        # Display detective analysis if present
-                        if detective_analysis:
-                            analysis_text = format_detective_analysis(detective_analysis)
-                            console.print(f"[dim]{analysis_text}[/dim]")
-
-                            # Check for blocked messages
-                            if detective_analysis.get("verdict") == "block":
-                                console.print(
-                                    "[error]🚫 Message was blocked by security analysis[/error]"
-                                )
-                                continue
-
-                        # Display agent response with turn_id
-                        if message_text:
-                            render_answer(message_text, agent_name, turn_id)
-                        else:
-                            logger.warning("Empty message text in callback")
-
-                        # Re-display the input prompt after showing the response
-                        if current_prompt["text"]:
-                            print(current_prompt["text"], end="", flush=True)
-
-                    except Exception as e:
-                        logger.error(f"Error processing callback message: {e}", exc_info=True)
-                        console.print(
-                            f"[error]⚠️  Error displaying callback message: {e}[/error]"
-                        )
-
-            except asyncio.CancelledError:
-                logger.info("Callback message consumer cancelled")
-                raise
-
-        consumer_task = asyncio.create_task(consume_callback_messages())
 
     try:
         while True:
@@ -312,7 +227,7 @@ async def run_chat_loop(
                 else:
                     prompt_prefix = "💬 [no-history] You: " if no_history else "💬 You: "
 
-                # Store current prompt for re-display after callback messages
+                # Store current prompt
                 current_prompt["text"] = prompt_prefix
 
                 if multi_input_enabled:
@@ -335,7 +250,6 @@ async def run_chat_loop(
                         'l9router_url': os.environ.get('L9ROUTER_URL', 'N/A'),
                         'user_id': os.environ.get('L9ROUTER_USER_ID', 'N/A'),
                         'agent_name': agent_name,
-                        'callback_server': callback_server,
                         'turn_id': current_turn_tracker if current_turn_tracker else {},
                         'history': [],  # Could be populated with actual message history
                     }
@@ -389,14 +303,6 @@ async def run_chat_loop(
                 console.print("\n[agent]👋 Chat interrupted. Goodbye![/agent]")
                 break
     finally:
-        # Cancel callback consumer if it was started
-        if consumer_task is not None:
-            consumer_task.cancel()
-            try:
-                await consumer_task
-            except asyncio.CancelledError:
-                pass
-
         if not no_history:
             try:
                 readline.write_history_file(history_file)
