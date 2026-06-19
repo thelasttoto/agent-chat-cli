@@ -943,6 +943,7 @@ async def handle_user_input(user_input: str, token: str = None) -> None:
             debug_log("Successfully connected to agent")
 
             payload = create_send_message_payload(user_input)
+            a2a_message = None  # Will be set for L9Router mode
 
             if L9ROUTER_MODE:
                 # In L9Router mode, wrap USER_MSG payload as A2A message
@@ -1514,9 +1515,16 @@ async def handle_user_input(user_input: str, token: str = None) -> None:
                 )
 
             # Fallback: non-streaming request
-            request = SendMessageRequest(
-                id=uuid4().hex, params=MessageSendParams(**payload)
-            )
+            if L9ROUTER_MODE and a2a_message:
+                # Use wrapped message for L9Router mode
+                request = SendMessageRequest(
+                    id=uuid4().hex, params=MessageSendParams(message=a2a_message)
+                )
+            else:
+                # Use payload for standard A2A mode
+                request = SendMessageRequest(
+                    id=uuid4().hex, params=MessageSendParams(**payload)
+                )
             debug_log(f"Sending non-streaming message to agent at {client.url}...")
             response: SendMessageResponse = await client.send_message(request)
             debug_log("Received response from agent (non-streaming)")

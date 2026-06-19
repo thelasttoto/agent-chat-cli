@@ -112,8 +112,8 @@ console = Console(theme=custom_theme)
 )
 @click.option(
     "--l9router",
-    is_flag=True,
-    help="Enable L9Router proxy mode (requires DEPLOYMENT_ID, L9ROUTER_AGENT_NAME, L9ROUTER_USER_ID)",
+    default=None,
+    help="L9Router/Dispatcher URL (e.g., http://localhost:8888 or http://localhost:9000). If not provided, uses L9ROUTER_URL environment variable or L9ROUTER_MODE flag.",
 )
 @click.option("--agent-name", default=None, help="Target agent name (L9Router mode)")
 @click.option("--user-id", default=None, help="User identifier (L9Router mode)")
@@ -123,16 +123,22 @@ def a2a(host, port, token, debug, multi_input, no_history, l9router, agent_name,
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Check for L9Router mode from environment if not set via flag
-    if not l9router:
-        l9router = os.environ.get("L9ROUTER_MODE", "false").lower() in ["true", "1", "yes"]
+    # Determine L9Router mode and URL
+    l9router_url = None
+    l9router_mode = False
+
+    if l9router:
+        # URL provided as parameter - use it directly
+        l9router_url = l9router
+        l9router_mode = True
+    elif os.environ.get("L9ROUTER_MODE", "false").lower() in ["true", "1", "yes"]:
+        # L9Router mode enabled via environment variable
+        l9router_url = os.environ.get("L9ROUTER_URL", "http://localhost:9000")
+        l9router_mode = True
 
     # L9Router mode: validate and configure
-    if l9router:
+    if l9router_mode:
         console.print("🔀 [info]L9Router proxy mode enabled[/info]")
-
-        # Read L9Router configuration
-        l9router_url = os.environ.get("L9ROUTER_URL", "http://localhost:9000")
         deployment_id = os.environ.get("DEPLOYMENT_ID")
 
         # Get agent_name and user_id from CLI args or environment
@@ -181,7 +187,7 @@ def a2a(host, port, token, debug, multi_input, no_history, l9router, agent_name,
         env_token = os.environ.get("A2A_TOKEN", "")
 
     # Skip prompts in L9Router mode (already configured)
-    if not l9router:
+    if not l9router_mode:
         # Enhanced popup prompt
         def popup_input(prompt_text, default=None, password=False):
             panel = Panel(
@@ -212,13 +218,13 @@ def a2a(host, port, token, debug, multi_input, no_history, l9router, agent_name,
             )
         )
 
-    if not l9router and not host:
+    if not l9router_mode and not host:
         if env_host:
             host = env_host
         else:
             host = simple_prompt("[info]Enter host[/info]", default=None)
 
-    if not l9router and not port:
+    if not l9router_mode and not port:
         if env_port:
             try:
                 port = int(env_port)
@@ -234,7 +240,7 @@ def a2a(host, port, token, debug, multi_input, no_history, l9router, agent_name,
                 )
                 sys.exit(1)
 
-    if not l9router and token is None:
+    if not l9router_mode and token is None:
         if env_token:
             token = env_token
         else:
