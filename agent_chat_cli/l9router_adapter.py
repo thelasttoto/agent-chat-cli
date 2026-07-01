@@ -53,6 +53,10 @@ def create_user_msg_payload(
         ...     turn_id=1
         ... )
     """
+    logger.info(
+        "Creating USER_MSG payload for agent '%s', user '%s', conversation '%s', turn %d",
+        agent_name, user_id, conversation_id, turn_id
+    )
     return {
         "type": "USER_MSG",
         "agent_name": agent_name,
@@ -83,11 +87,14 @@ def wrap_as_a2a_message(payload: dict) -> Message:
         >>> a2a_msg = wrap_as_a2a_message(payload)
     """
     payload_json = json.dumps(payload)
+    context_id = payload.get("conversation_id")
 
-    logger.debug(f"Wrapping payload as A2A message: {payload_json[:100]}...")
+    logger.info(f"Wrapping payload as A2A message. conversation_id from payload: {context_id}, setting as context_id")
+    logger.debug(f"Payload: {payload_json[:100]}...")
 
     return Message(
         role=Role.user,
+        context_id=context_id,
         message_id=uuid4().hex,
         parts=[Part(root=TextPart(text=payload_json))],
         metadata={},
