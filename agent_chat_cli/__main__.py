@@ -27,6 +27,20 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 def load_client_module(protocol):
     """Dynamically load the client module for the given protocol."""
+    # Try to import from the package first to avoid duplicate module instances
+    try:
+        module_name = f"agent_chat_cli.{protocol}_client"
+        if module_name in sys.modules:
+            # Module already imported, return it
+            return sys.modules[module_name]
+
+        # Import the module from the package
+        module = __import__(module_name, fromlist=[protocol])
+        return module
+    except ImportError:
+        pass
+
+    # Fallback to file-based loading (for development)
     base_dir = Path(__file__).parent
     module_path = base_dir / f"{protocol}_client.py"
 

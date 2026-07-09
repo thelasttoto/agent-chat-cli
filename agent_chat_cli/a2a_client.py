@@ -120,7 +120,7 @@ console = Console()
 from datetime import datetime
 
 _session_state = {
-    "context_id": uuid4().hex,
+    "context_id": str(uuid4()),
     "started_at": datetime.now(),
 }
 
@@ -138,7 +138,9 @@ def get_session_context_id() -> str:
     Returns:
         Current session context ID (conversation_id/contextId)
     """
-    return _session_state["context_id"]
+    context_id = _session_state["context_id"]
+    logger.debug(f"get_session_context_id() returning: {context_id}")
+    return context_id
 
 
 def reset_session() -> str:
@@ -163,7 +165,7 @@ def reset_session() -> str:
             "Please wait for the current response to complete."
         )
 
-    new_context_id = uuid4().hex
+    new_context_id = str(uuid4())
     _session_state["context_id"] = new_context_id
     _session_state["started_at"] = datetime.now()
 
@@ -682,12 +684,15 @@ def create_send_message_payload(text: str) -> dict[str, Any]:
         # L9Router mode: create USER_MSG payload
         from agent_chat_cli.l9router_adapter import create_user_msg_payload
 
+        session_id = get_session_context_id()
+        logger.info(f"Using session context_id for conversation_id: {session_id}")
+
         payload = create_user_msg_payload(
             text=text,
             agent_name=L9ROUTER_AGENT_NAME,
             user_id=L9ROUTER_USER_ID,
             deployment_id=DEPLOYMENT_ID,
-            conversation_id=get_session_context_id(),
+            conversation_id=session_id,
             turn_id=get_next_turn_id(),
         )
 
