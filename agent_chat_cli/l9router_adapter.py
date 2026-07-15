@@ -24,7 +24,7 @@ def create_user_msg_payload(
     user_id: str,
     deployment_id: str,
     conversation_id: str,
-    turn_id: int,
+    turn_id: str,
 ) -> dict[str, Any]:
     """
     Create USER_MSG payload for L9Router.
@@ -38,7 +38,7 @@ def create_user_msg_payload(
         user_id: User identifier
         deployment_id: Deployment UUID (mandatory)
         conversation_id: Conversation identifier for tracking
-        turn_id: Turn number in the conversation
+        turn_id: Turn identifier (UUID format)
 
     Returns:
         Dictionary with USER_MSG structure ready to be sent to L9Router
@@ -50,11 +50,11 @@ def create_user_msg_payload(
         ...     user_id="alice",
         ...     deployment_id="550e8400-e29b-41d4-a716-446655440000",
         ...     conversation_id="conv-123",
-        ...     turn_id=1
+        ...     turn_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         ... )
     """
     logger.info(
-        "Creating USER_MSG payload for agent '%s', user '%s', conversation '%s', turn %d",
+        "Creating USER_MSG payload for agent '%s', user '%s', conversation '%s', turn %s",
         agent_name, user_id, conversation_id, turn_id
     )
     return {

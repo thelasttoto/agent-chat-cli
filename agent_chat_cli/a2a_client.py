@@ -124,8 +124,7 @@ _session_state = {
     "started_at": datetime.now(),
 }
 
-# Turn counter for L9Router mode (will be replaced by tracker dict)
-_turn_counter = 0
+# Turn tracker for L9Router mode - stores current turn UUID
 _turn_tracker = None  # Will be set by main()
 
 # Track if message processing is active (for edge case handling)
@@ -156,8 +155,6 @@ def reset_session() -> str:
     Raises:
         RuntimeError: If called during active message processing
     """
-    global _turn_counter
-
     # Edge case 1: Don't allow reset during active processing
     if _processing_active:
         raise RuntimeError(
@@ -169,10 +166,9 @@ def reset_session() -> str:
     _session_state["context_id"] = new_context_id
     _session_state["started_at"] = datetime.now()
 
-    # Reset turn counter
-    _turn_counter = 0
+    # Generate initial turn_id for new session
     if _turn_tracker is not None:
-        _turn_tracker["turn"] = 1
+        _turn_tracker["turn_id"] = str(uuid4())
 
     logger.info(f"New session started: {new_context_id}")
     return new_context_id
@@ -201,18 +197,22 @@ def set_processing_active(active: bool) -> None:
     _processing_active = active
 
 
-def get_next_turn_id() -> int:
-    """Get next turn ID for L9Router message tracking."""
-    global _turn_counter, _turn_tracker
+def get_next_turn_id() -> str:
+    """Get next turn ID for L9Router message tracking.
 
-    # Use tracker if available (preferred), otherwise use global counter
+    Returns:
+        A new UUID string for this turn
+    """
+    global _turn_tracker
+
+    # Generate a new UUID for this turn
+    turn_id = str(uuid4())
+
+    # Update tracker if available
     if _turn_tracker is not None:
-        current = _turn_tracker.get("turn", 1)
-        _turn_tracker["turn"] = current + 1
-        return current
-    else:
-        _turn_counter += 1
-        return _turn_counter
+        _turn_tracker["turn_id"] = turn_id
+
+    return turn_id
 
 
 def debug_log(message: str) -> None:
@@ -1707,7 +1707,7 @@ async def async_main(host, port, token, tls, multi_input_enabled=False, no_histo
     logger.debug(f"Skills examples: {skills_examples}")
 
     # L9Router mode: No callback setup needed (A2A push-based)
-    current_turn_tracker = {"turn": 1}  # Track current turn starting from 1
+    current_turn_tracker = {"turn_id": str(uuid4())}  # Track current turn with UUID
 
     # Set global turn tracker for get_next_turn_id()
     global _turn_tracker

@@ -65,25 +65,22 @@ async def spinner(
         await asyncio.sleep(0.1)
 
 
-def render_answer(answer: str, agent_name: str = "Agent", turn_id: int | None = None):
+def render_answer(answer: str, agent_name: str = "Agent", turn_id: str | None = None):
     """
     Render agent response in a formatted panel.
 
     Args:
         answer: The agent's response text
         agent_name: Name of the agent
-        turn_id: Optional turn ID to display in the panel title
+        turn_id: Optional turn ID (kept for backward compatibility, not displayed)
     """
     answer = answer.strip()
     if re.match(r"^b?[\"']?\{.*\}['\"]?$", answer):
         console.print("[warning]⚠️  Skipping raw byte/dict output.[/warning]")
         return
 
-    # Build title with optional turn_id
-    if turn_id is not None:
-        title = f"[agent]{agent_name} Response [Turn {turn_id}][/agent]"
-    else:
-        title = f"[agent]{agent_name} Response[/agent]"
+    # Build title without turn_id (UUIDs are not user-friendly)
+    title = f"[agent]{agent_name} Response[/agent]"
 
     console.print("\n")
     console.print(
@@ -217,15 +214,8 @@ async def run_chat_loop(
     try:
         while True:
             try:
-                # Build prompt with turn_id if tracker is provided
-                if current_turn_tracker is not None:
-                    current_turn = current_turn_tracker.get("turn", 0)
-                    if no_history:
-                        prompt_prefix = f"💬 [no-history] You [Turn {current_turn}]: "
-                    else:
-                        prompt_prefix = f"💬 You [Turn {current_turn}]: "
-                else:
-                    prompt_prefix = "💬 [no-history] You: " if no_history else "💬 You: "
+                # Build prompt without turn_id (UUIDs are not user-friendly)
+                prompt_prefix = "💬 [no-history] You: " if no_history else "💬 You: "
 
                 # Store current prompt
                 current_prompt["text"] = prompt_prefix

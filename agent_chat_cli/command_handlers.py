@@ -43,17 +43,21 @@ def handle_newsession(args: list[str], context: dict[str, Any]) -> str:
             # Edge case 1: Session reset during active processing
             return f"❌ {str(e)}"
 
-        # Edge case 3: Reset turn counter if available (safe check)
+        # Edge case 3: Reset turn_id if available (safe check)
         turn_tracker = context.get('turn_id')
+        new_turn_id = None
         if turn_tracker and isinstance(turn_tracker, dict):
-            turn_tracker['turn'] = 1
-            logger.info("Turn counter reset to 1")
+            from uuid import uuid4
+            new_turn_id = str(uuid4())
+            turn_tracker['turn_id'] = new_turn_id
+            logger.info(f"Turn ID reset to new UUID: {new_turn_id}")
 
         output = "\n🔄 New Session Started\n"
         output += "=" * 50 + "\n"
         output += f"  Previous Session: {old_session_id[:16]}...\n"
         output += f"  New Session:      {new_session_id[:16]}...\n"
-        output += f"  Turn Counter:     Reset to 1\n"
+        if new_turn_id:
+            output += f"  Turn ID:          {new_turn_id}\n"
         output += "=" * 50 + "\n"
         output += "\n[dim]The agent will treat this as a brand new conversation.[/dim]"
 
@@ -89,8 +93,8 @@ def handle_sessioninfo(args: list[str], context: dict[str, Any]) -> str:
         # Edge case 3: Safe check for turn tracker
         turn_tracker = context.get('turn_id')
         if turn_tracker and isinstance(turn_tracker, dict):
-            current_turn = turn_tracker.get('turn', 0)
-            output += f"  Current Turn: {current_turn}\n"
+            current_turn_id = turn_tracker.get('turn_id', 'N/A')
+            output += f"  Current Turn ID: {current_turn_id}\n"
 
         output += "=" * 50
 
@@ -193,8 +197,8 @@ def handle_status(args: list[str], context: dict[str, Any]) -> str:
     # Edge case 3: Safe check for turn tracker
     turn_tracker = context.get('turn_id')
     if turn_tracker and isinstance(turn_tracker, dict):
-        current_turn = turn_tracker.get('turn', 0)
-        output += f"  Current Turn:    {current_turn}\n"
+        current_turn_id = turn_tracker.get('turn_id', 'N/A')
+        output += f"  Current Turn ID: {current_turn_id}\n"
 
     output += "=" * 50
 
@@ -252,13 +256,18 @@ def handle_history(args: list[str], context: dict[str, Any]) -> str:
 
     for i, msg in enumerate(recent, 1):
         turn = msg.get('turn_id', '?')
+        # Truncate UUID to first 8 chars if it's a valid UUID string
+        if isinstance(turn, str) and len(turn) > 8:
+            turn_display = turn[:8]
+        else:
+            turn_display = turn
         sender = msg.get('sender', 'unknown')
         text = msg.get('text', '')[:100]  # Truncate long messages
 
         if len(msg.get('text', '')) > 100:
             text += "..."
 
-        output += f"\n[{i}] Turn {turn} - {sender}:\n"
+        output += f"\n[{i}] Turn {turn_display} - {sender}:\n"
         output += f"    {text}\n"
 
     output += "=" * 50

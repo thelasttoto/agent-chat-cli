@@ -1,6 +1,7 @@
 """Tests for command processing system."""
 
 import pytest
+from uuid import uuid4
 from agent_chat_cli.commands import (
     ChatExitException,
     Command,
@@ -82,15 +83,11 @@ def test_process_command_status():
     """Test /status command processing."""
     register_default_commands()
 
-    class FakeCallbackServer:
-        port = 8080
-
     context = {
         'l9router_url': 'http://localhost:9000',
         'user_id': 'alice',
         'agent_name': 'root_agent',
-        'callback_server': FakeCallbackServer(),
-        'turn_id': {'turn': 5},
+        'turn_id': {'turn_id': str(uuid4())},
         'history': [],
     }
 
@@ -100,7 +97,7 @@ def test_process_command_status():
     assert "Connection Status" in output
     assert "alice" in output
     assert "root_agent" in output
-    assert "8080" in output
+    assert "http://localhost:9000" in output
 
 
 def test_process_command_exit():
@@ -191,8 +188,8 @@ def test_command_with_arguments():
         'agent_name': 'test',
         'turn_id': {},
         'history': [
-            {'turn_id': 1, 'sender': 'user', 'text': 'Hello'},
-            {'turn_id': 2, 'sender': 'agent', 'text': 'Hi there'},
+            {'turn_id': str(uuid4()), 'sender': 'user', 'text': 'Hello'},
+            {'turn_id': str(uuid4()), 'sender': 'agent', 'text': 'Hi there'},
         ],
     }
 
@@ -225,7 +222,8 @@ def test_newsession_command_handler():
     """Test /newsession command handler."""
     register_default_commands()
 
-    turn_tracker = {'turn': 5}
+    old_turn_id = str(uuid4())
+    turn_tracker = {'turn_id': old_turn_id}
 
     context = {
         'l9router_url': 'test',
@@ -240,14 +238,18 @@ def test_newsession_command_handler():
     assert handled is True
     assert output is not None
     assert "New Session Started" in output
-    assert turn_tracker['turn'] == 1  # Reset
+    # Verify turn_id was reset to a new UUID (different from old one)
+    assert 'turn_id' in turn_tracker
+    assert turn_tracker['turn_id'] != old_turn_id
+    # Verify it's a valid UUID format
+    assert len(turn_tracker['turn_id']) == 36  # UUID string length
 
 
 def test_newsession_aliases():
     """Test /newsession aliases work correctly."""
     register_default_commands()
 
-    turn_tracker = {'turn': 3}
+    turn_tracker = {'turn_id': str(uuid4())}
 
     context = {
         'l9router_url': 'test',
@@ -258,26 +260,28 @@ def test_newsession_aliases():
     }
 
     # Test /ns alias
+    old_turn_id = turn_tracker['turn_id']
     handled, output = process_command('/ns', context)
     assert handled is True
     assert "New Session Started" in output
-    assert turn_tracker['turn'] == 1
-
-    # Reset for next test
-    turn_tracker['turn'] = 3
+    assert turn_tracker['turn_id'] != old_turn_id
+    assert len(turn_tracker['turn_id']) == 36
 
     # Test /new alias
+    old_turn_id = turn_tracker['turn_id']
     handled, output = process_command('/new', context)
     assert handled is True
     assert "New Session Started" in output
-    assert turn_tracker['turn'] == 1
+    assert turn_tracker['turn_id'] != old_turn_id
+    assert len(turn_tracker['turn_id']) == 36
 
 
 def test_sessioninfo_command():
     """Test /sessioninfo command displays session information."""
     register_default_commands()
 
-    turn_tracker = {'turn': 5}
+    test_turn_id = str(uuid4())
+    turn_tracker = {'turn_id': test_turn_id}
 
     context = {
         'l9router_url': 'test',
@@ -294,7 +298,8 @@ def test_sessioninfo_command():
     assert "Session Information" in output
     assert "Session ID:" in output
     assert "Duration:" in output
-    assert "Current Turn: 5" in output
+    assert "Current Turn ID:" in output
+    assert test_turn_id in output  # Full UUID should be displayed
 
 
 def test_sessioninfo_aliases():
@@ -305,7 +310,7 @@ def test_sessioninfo_aliases():
         'l9router_url': 'test',
         'user_id': 'test',
         'agent_name': 'test',
-        'turn_id': {'turn': 3},
+        'turn_id': {'turn_id': str(uuid4())},
         'history': [],
     }
 
@@ -327,12 +332,13 @@ def test_status_includes_session_info():
     class FakeCallbackServer:
         port = 8080
 
+    test_turn_id = str(uuid4())
     context = {
         'l9router_url': 'http://localhost:9000',
         'user_id': 'alice',
         'agent_name': 'root_agent',
         'callback_server': FakeCallbackServer(),
-        'turn_id': {'turn': 5},
+        'turn_id': {'turn_id': test_turn_id},
         'history': [],
     }
 
@@ -343,3 +349,4 @@ def test_status_includes_session_info():
     assert "Connection Status" in output
     assert "Session ID:" in output
     assert "Session Duration:" in output
+    assert test_turn_id in output  # Full UUID should be displayed
